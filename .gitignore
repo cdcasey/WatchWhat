@@ -1,0 +1,6 @@
+*_templ.go
+web/static/css/app.css
+*.db
+*.db-*
+/bin/
+/watchwhat

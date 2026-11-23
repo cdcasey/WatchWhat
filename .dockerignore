@@ -1,0 +1,10 @@
+.git
+bin/
+openspec/
+*.db
+*.db-*
+**/*_templ.go
+web/static/css/app.css
+Dockerfile
+.dockerignore
+.env

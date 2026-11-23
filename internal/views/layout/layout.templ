@@ -1,0 +1,98 @@
+package layout
+
+// Meta is everything the page frame needs besides the content.
+type Meta struct {
+	Title  string
+	Active string
+	CSS    string
+	JS     string
+}
+
+// htmx 2 doesn't swap 4xx/5xx by default; errors are retargeted to #toasts by
+// the server, so swapping them is safe. historyCacheSize 0 makes back/forward
+// re-fetch instead of restoring possibly stale snapshots.
+const htmxConfig = `{"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true},{"code":"...","swap":false}]}`
+
+templ Base(m Meta, content templ.Component) {
+	<!DOCTYPE html>
+	<html lang="en" class="dark">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="htmx-config" content={ htmxConfig }/>
+			<title>{ PageTitle(m.Title) }</title>
+			<link rel="stylesheet" href={ m.CSS }/>
+			<script src={ m.JS } defer></script>
+		</head>
+		<body class="min-h-dvh bg-bg text-fg antialiased">
+			<header class="sticky top-0 z-40 border-b border-border bg-bg/95 backdrop-blur">
+				<div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+					<a href="/" hx-get="/" hx-target="#main" hx-push-url="true" class="text-lg font-bold tracking-tight text-accent">WatchWhat</a>
+					@Nav(m.Active, false)
+				</div>
+			</header>
+			<main id="main" class="mx-auto max-w-6xl px-4 py-4">
+				@content
+			</main>
+			@Toasts()
+		</body>
+	</html>
+}
+
+// Fragment is the content-only response for HTMX navigation: the content plus
+// an updated <title> and an out-of-band nav so the active section follows.
+templ Fragment(m Meta, content templ.Component) {
+	<title>{ PageTitle(m.Title) }</title>
+	@content
+	@Nav(m.Active, true)
+}
+
+func PageTitle(t string) string {
+	if t == "" {
+		return "WatchWhat"
+	}
+	return t + " · WatchWhat"
+}
+
+type navItem struct{ Key, Label, Href string }
+
+var navItems = []navItem{
+	{"home", "Home", "/"},
+	{"watching", "Watching", "/watching"},
+	{"backlog", "Backlog", "/backlog"},
+	{"completed", "Completed", "/completed"},
+	{"dropped", "Dropped", "/dropped"},
+	{"schedule", "Schedule", "/schedule"},
+	{"search", "Search", "/search"},
+}
+
+templ Nav(active string, oob bool) {
+	<nav
+		id="nav"
+		aria-label="Primary"
+		class="flex flex-wrap gap-1 text-sm"
+		if oob {
+			hx-swap-oob="true"
+		}
+	>
+		for _, it := range navItems {
+			<a
+				href={ templ.SafeURL(it.Href) }
+				hx-get={ it.Href }
+				hx-target="#main"
+				hx-push-url="true"
+				if it.Key == active {
+					aria-current="page"
+				}
+				class={ "rounded-md px-2 py-1 transition-colors",
+					templ.KV("bg-surface-2 text-fg font-medium", it.Key == active),
+					templ.KV("text-muted hover:text-fg", it.Key != active) }
+			>{ it.Label }</a>
+		}
+	</nav>
+}
+
+templ Toasts() {
+	<div id="toasts" aria-live="polite" class="pointer-events-none fixed inset-x-4 bottom-4 z-50 flex flex-col items-center gap-2"></div>
+}

@@ -1,0 +1,255 @@
+package pages
+
+import (
+	"net/url"
+	"strconv"
+
+	"github.com/chriscasey/watchwhat/internal/schedule"
+	"github.com/chriscasey/watchwhat/internal/tracking"
+	"github.com/chriscasey/watchwhat/internal/views/components"
+	"time"
+)
+
+templ navLink(href, cls string) {
+	<a href={ templ.SafeURL(href) } hx-get={ href } hx-target="#main" hx-push-url="true" class={ cls }>
+		{ children... }
+	</a>
+}
+
+templ Home(today time.Weekday, lineup, cont []tracking.Item) {
+	<div class="flex flex-col gap-8">
+		<section class="flex flex-col gap-3">
+			<h1 class="text-xl font-bold">Today's Lineup <span class="font-normal text-muted">· { today.String() }</span></h1>
+			if len(lineup) == 0 {
+				<div class="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted">
+					Nothing scheduled for { today.String() }.
+					@navLink("/schedule", "font-medium text-accent hover:underline") {
+						Plan your week
+					}
+				</div>
+			} else {
+				@components.CardGrid() {
+					for _, it := range lineup {
+						@components.MediaCard(it, "lineup", 0)
+					}
+				}
+			}
+		</section>
+		<section class="flex flex-col gap-3">
+			<h2 class="text-lg font-semibold">Continue watching</h2>
+			if len(cont) == 0 {
+				<div class="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted">
+					Nothing in progress.
+					@navLink("/search", "font-medium text-accent hover:underline") {
+						Find something to watch
+					}
+				</div>
+			} else {
+				@components.CardGrid() {
+					for _, it := range cont {
+						@components.MediaCard(it, "continue", 0)
+					}
+				}
+			}
+		</section>
+	</div>
+}
+
+// ListURL builds a list view URL; zero-valued options are omitted.
+func ListURL(status string, o tracking.ListOpts) string {
+	q := url.Values{}
+	if o.Type != "" {
+		q.Set("type", o.Type)
+	}
+	if o.StaleOnly {
+		q.Set("stale", "1")
+	}
+	if o.Sort == "stale" {
+		q.Set("sort", "stale")
+	}
+	if len(q) == 0 {
+		return "/" + status
+	}
+	return "/" + status + "?" + q.Encode()
+}
+
+func chip(active bool) string {
+	if active {
+		return "rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-fg"
+	}
+	return "rounded-full bg-surface-2 px-3 py-1 text-xs text-muted hover:text-fg"
+}
+
+func with(o tracking.ListOpts, f func(*tracking.ListOpts)) tracking.ListOpts { f(&o); return o }
+
+templ List(status string, items []tracking.Item, o tracking.ListOpts) {
+	<div class="flex flex-col gap-4">
+		<div class="flex items-baseline justify-between gap-2">
+			<h1 class="text-xl font-bold">{ components.StatusLabel(status) }</h1>
+			<span class="text-sm text-muted">{ strconv.Itoa(len(items)) }</span>
+		</div>
+		<div class="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Filters">
+			@navLink(ListURL(status, with(o, func(x *tracking.ListOpts) { x.Type = "" })), chip(o.Type == "")) {
+				All
+			}
+			@navLink(ListURL(status, with(o, func(x *tracking.ListOpts) { x.Type = "tv" })), chip(o.Type == "tv")) {
+				TV
+			}
+			@navLink(ListURL(status, with(o, func(x *tracking.ListOpts) { x.Type = "movie" })), chip(o.Type == "movie")) {
+				Movies
+			}
+			if status == tracking.StatusWatching {
+				<span class="mx-1 h-4 w-px bg-border"></span>
+				@navLink(ListURL(status, with(o, func(x *tracking.ListOpts) { x.StaleOnly = !x.StaleOnly })), chip(o.StaleOnly)) {
+					Stale only
+				}
+				<span class="mx-1 h-4 w-px bg-border"></span>
+				@navLink(ListURL(status, with(o, func(x *tracking.ListOpts) { x.Sort = "" })), chip(o.Sort != "stale")) {
+					Recent
+				}
+				@navLink(ListURL(status, with(o, func(x *tracking.ListOpts) { x.Sort = "stale" })), chip(o.Sort == "stale")) {
+					Most stale first
+				}
+			}
+		</div>
+		if len(items) == 0 {
+			<div class="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted">
+				Nothing here.
+				@navLink("/search", "font-medium text-accent hover:underline") {
+					Search TMDB
+				}
+			</div>
+		} else {
+			@components.CardGrid() {
+				for _, it := range items {
+					@components.MediaCard(it, status, 0)
+				}
+			}
+		}
+	</div>
+}
+
+templ Search() {
+	<div class="flex flex-col gap-4">
+		<h1 class="text-xl font-bold">Search</h1>
+		<input
+			type="search"
+			name="q"
+			autofocus
+			autocomplete="off"
+			placeholder="Search TV shows and movies"
+			aria-label="Search TMDB"
+			hx-get="/search/results"
+			hx-trigger="input changed delay:300ms, search"
+			hx-target="#results"
+			hx-sync="this:replace"
+			class="w-full rounded-lg border border-border bg-surface px-4 py-3 text-base text-fg placeholder:text-muted focus:border-accent focus:outline-none"
+		/>
+		<ul id="results" class="divide-y divide-border"></ul>
+	</div>
+}
+
+type Detail struct {
+	Item    tracking.Item
+	Seasons []tracking.Season
+}
+
+func openSeason(d Detail, s tracking.Season) bool {
+	if n := d.Item.Progress.Next; n != nil {
+		return n.Season == s.Number
+	}
+	return len(d.Seasons) == 1
+}
+
+// DetailContent is the swap unit for detail-page refresh and status changes.
+templ DetailContent(d Detail) {
+	{{ it := d.Item }}
+	<div id="detail" class="flex flex-col gap-6">
+		<div class="flex gap-4">
+			<div class="w-28 shrink-0 sm:w-44">
+				@components.Poster(it.PosterPath, it.Title, false)
+			</div>
+			<div class="flex min-w-0 flex-1 flex-col gap-3">
+				<div>
+					<h1 class="text-xl font-bold sm:text-2xl">{ it.Title }</h1>
+					<p class="text-sm text-muted">
+						if it.Year != "" {
+							{ it.Year } ·
+						}
+						{ components.TypeLabel(it.Type) }
+						if it.TMDBStatus != "" {
+							· { it.TMDBStatus }
+						}
+					</p>
+				</div>
+				if it.Progress.Stale {
+					@components.StaleBadge(it.Progress.DaysIdle)
+				}
+				if it.IsTV() {
+					<div class="flex flex-col gap-1">
+						if n := it.Progress.Next; n != nil {
+							<p class="text-sm"><span class="text-muted">Next</span> { components.EpLabel(n) } · { n.Name }</p>
+						} else {
+							<p class="text-sm">
+								<span class="text-ok">Caught up</span>
+								if u := it.Progress.Upcoming; u != nil {
+									<span class="text-muted">· next episode { components.ShortDate(*u) }</span>
+								}
+							</p>
+						}
+						@components.ProgressCounter(it.ID, it.Progress.Watched, it.Progress.Aired, true, false)
+					</div>
+				} else if it.WatchedAt != nil {
+					<p class="text-sm text-muted">Watched { components.ShortDate(*it.WatchedAt) }</p>
+				}
+				<div class="w-40">
+					@components.StatusSelect(it, "detail", "#detail")
+				</div>
+				<div class="flex flex-wrap gap-2">
+					if it.Progress.CanComplete {
+						<button type="button" hx-post={ "/media/" + strconv.FormatInt(it.ID, 10) + "/status" } hx-vals={ `{"status":"completed","ctx":"detail"}` } hx-target="#detail" hx-swap="outerHTML" hx-disabled-elt="this" class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg">Mark completed</button>
+					}
+					if !it.IsTV() && it.Status != tracking.StatusCompleted {
+						<button type="button" hx-post={ "/media/" + strconv.FormatInt(it.ID, 10) + "/watched" } hx-vals={ `{"ctx":"detail"}` } hx-target="#detail" hx-swap="outerHTML" hx-disabled-elt="this" class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg">Mark watched</button>
+					}
+					<button type="button" hx-post={ "/media/" + strconv.FormatInt(it.ID, 10) + "/refresh" } hx-target="#detail" hx-swap="outerHTML" hx-disabled-elt="this" class="rounded-md bg-surface-2 px-3 py-1.5 text-xs font-medium hover:bg-border">Refresh from TMDB</button>
+					<button type="button" hx-delete={ "/media/" + strconv.FormatInt(it.ID, 10) } hx-confirm={ "Remove " + it.Title + "? Its watch history and schedule assignments will be deleted." } hx-disabled-elt="this" class="rounded-md bg-surface-2 px-3 py-1.5 text-xs font-medium text-danger hover:bg-border">Remove</button>
+				</div>
+			</div>
+		</div>
+		if it.Overview != "" {
+			<p class="max-w-prose text-sm leading-relaxed text-muted">{ it.Overview }</p>
+		}
+		if it.IsTV() {
+			<div class="flex flex-col gap-3">
+				for _, s := range d.Seasons {
+					@components.SeasonBlock(s, openSeason(d, s))
+				}
+			</div>
+		}
+	</div>
+}
+
+templ Schedule(days []schedule.Day, opts []schedule.Option, today time.Weekday) {
+	<div class="flex flex-col gap-4">
+		<h1 class="text-xl font-bold">Schedule</h1>
+		if len(opts) == 0 {
+			<p class="text-sm text-muted">Add TV shows to Backlog or Watching to schedule them.</p>
+		}
+		<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+			for _, d := range days {
+				@components.DayColumn(d, opts, d.Weekday == today)
+			}
+		</div>
+	</div>
+}
+
+templ Error(status int, msg string) {
+	<div class="flex flex-col items-center gap-3 py-16 text-center">
+		<p class="text-5xl font-bold text-muted">{ strconv.Itoa(status) }</p>
+		<p class="text-lg">{ msg }</p>
+		<a href="/" class="font-medium text-accent hover:underline">Back to Home</a>
+	</div>
+}
+
+func ListTitle(status string) string { return components.StatusLabel(status) }

@@ -1,0 +1,95 @@
+package components
+
+import (
+	"time"
+
+	"github.com/chriscasey/watchwhat/internal/schedule"
+)
+
+func dayPath(wd time.Weekday) string { return "/schedule/" + itoa(int(wd)) }
+
+func unassigned(d schedule.Day, opts []schedule.Option) []schedule.Option {
+	in := map[int64]bool{}
+	for _, e := range d.Entries {
+		in[e.MediaID] = true
+	}
+	var out []schedule.Option
+	for _, o := range opts {
+		if !in[o.MediaID] {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// DayColumn is the swap unit of the planner: every action targets its section.
+templ DayColumn(d schedule.Day, opts []schedule.Option, today bool) {
+	<section class={ "flex flex-col gap-3 rounded-xl bg-surface p-3", templ.KV("ring-1 ring-accent/60", today) } aria-label={ d.Weekday.String() }>
+		<h2 class="flex items-center justify-between font-semibold">
+			{ d.Weekday.String() }
+			if today {
+				<span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">Today</span>
+			}
+		</h2>
+		if len(d.Entries) == 0 {
+			<p class="text-xs text-muted">Nothing scheduled.</p>
+		} else {
+			<ol class="flex flex-col gap-1.5">
+				for i, e := range d.Entries {
+					<li class={ "flex items-center gap-2 rounded-lg bg-surface-2 px-2 py-1.5", templ.KV("opacity-50", e.Inactive) }>
+						<a
+							href={ templ.SafeURL(mediaURL(e.MediaID)) }
+							hx-get={ mediaURL(e.MediaID) }
+							hx-target="#main"
+							hx-push-url="true"
+							class="min-w-0 flex-1 truncate text-sm"
+						>{ e.Title }</a>
+						if e.Inactive {
+							<span class="shrink-0 text-xs text-muted" title={ StatusLabel(e.Status) }>inactive</span>
+						}
+						<div class="flex shrink-0 gap-1">
+							<button
+								type="button"
+								aria-label={ "Move " + e.Title + " up" }
+								disabled?={ i == 0 }
+								hx-post={ dayPath(d.Weekday) + "/" + itoa(e.MediaID) + "/move" }
+								hx-vals={ vals("dir", "up") }
+								hx-target="closest section"
+								hx-swap="outerHTML"
+								class={ btnGhost }
+							>↑</button>
+							<button
+								type="button"
+								aria-label={ "Move " + e.Title + " down" }
+								disabled?={ i == len(d.Entries)-1 }
+								hx-post={ dayPath(d.Weekday) + "/" + itoa(e.MediaID) + "/move" }
+								hx-vals={ vals("dir", "down") }
+								hx-target="closest section"
+								hx-swap="outerHTML"
+								class={ btnGhost }
+							>↓</button>
+							<button
+								type="button"
+								aria-label={ "Remove " + e.Title + " from " + d.Weekday.String() }
+								hx-delete={ dayPath(d.Weekday) + "/" + itoa(e.MediaID) }
+								hx-target="closest section"
+								hx-swap="outerHTML"
+								class={ btnGhost }
+							>✕</button>
+						</div>
+					</li>
+				}
+			</ol>
+		}
+		if avail := unassigned(d, opts); len(avail) > 0 {
+			<form hx-post={ dayPath(d.Weekday) } hx-target="closest section" hx-swap="outerHTML" hx-disabled-elt="find button" class="mt-auto flex gap-1.5">
+				<select name="media_id" aria-label={ "Show to add to " + d.Weekday.String() } class={ selectCls, "min-w-0 flex-1" }>
+					for _, o := range avail {
+						<option value={ itoa(o.MediaID) }>{ o.Title }</option>
+					}
+				</select>
+				<button type="submit" class={ btnPrimary }>Add</button>
+			</form>
+		}
+	</section>
+}

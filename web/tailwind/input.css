@@ -1,0 +1,24 @@
+@import "tailwindcss";
+@source "../../internal/views";
+
+@theme {
+  --color-bg: #0b0d12;
+  --color-surface: #151922;
+  --color-surface-2: #1e2430;
+  --color-border: #2a3140;
+  --color-fg: #e6e9ef;
+  --color-muted: #8b93a7;
+  --color-accent: #7c9cff;
+  --color-accent-fg: #0b0d12;
+  --color-stale: #f5a524;
+  --color-danger: #f87171;
+  --color-ok: #4ade80;
+}
+
+@layer base {
+  :root { color-scheme: dark; }
+  html, body { background-color: var(--color-bg); color: var(--color-fg); }
+  body { -webkit-tap-highlight-color: transparent; }
+  button:not(:disabled), [role="button"] { cursor: pointer; }
+  button:disabled { opacity: .5; cursor: progress; }
+}

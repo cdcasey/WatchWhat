@@ -1,0 +1,302 @@
+package components
+
+import (
+	"github.com/chriscasey/watchwhat/internal/tmdb"
+	"github.com/chriscasey/watchwhat/internal/tracking"
+)
+
+// Poster is a fixed-aspect box whose background shows the title, so a missing
+// or failed image degrades to a readable placeholder without JS.
+templ Poster(path, title string, small bool) {
+	<div class="relative aspect-[2/3] w-full overflow-hidden rounded-lg bg-surface-2">
+		<span class="absolute inset-0 flex items-center justify-center p-2 text-center text-xs text-muted">{ title }</span>
+		if path != "" {
+			if small {
+				<img src={ tmdb.PosterURL(path, "w92") } alt="" loading="lazy" class="absolute inset-0 h-full w-full object-cover"/>
+			} else {
+				<img
+					src={ tmdb.PosterURL(path, "w185") }
+					srcset={ tmdb.PosterURL(path, "w185") + " 185w, " + tmdb.PosterURL(path, "w342") + " 342w" }
+					sizes="(min-width: 1024px) 200px, 45vw"
+					alt=""
+					loading="lazy"
+					class="absolute inset-0 h-full w-full object-cover"
+				/>
+			}
+		}
+	</div>
+}
+
+templ StaleBadge(days int) {
+	<span class="inline-flex w-fit items-center gap-1 rounded-full bg-stale/15 px-2 py-0.5 text-xs font-medium text-stale" title="No activity recently">
+		Stale · { itoa(days) } days
+	</span>
+}
+
+// ProgressCounter renders watched/aired. withID is used only on the detail
+// page (one show per page); oob marks it for an out-of-band swap.
+templ ProgressCounter(mediaID int64, watched, aired int, withID, oob bool) {
+	<div
+		if withID {
+			id={ "progress-" + itoa(mediaID) }
+		}
+		if oob {
+			hx-swap-oob="true"
+		}
+		class="flex items-center gap-2 text-xs text-muted"
+	>
+		<div class="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
+			<div class="h-full rounded-full bg-accent" style={ "width:" + pct(watched, aired) }></div>
+		</div>
+		<span class="tabular-nums">{ itoa(watched) }/{ itoa(aired) }</span>
+	</div>
+}
+
+templ Toast(msg string) {
+	<div role="alert" class="pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-lg border border-danger/40 bg-surface px-4 py-3 text-sm shadow-lg">
+		<span class="flex-1">{ msg }</span>
+		<button type="button" onclick="this.parentElement.remove()" aria-label="Dismiss" class="text-muted hover:text-fg">✕</button>
+	</div>
+}
+
+const btn = "rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors"
+const btnPrimary = btn + " bg-accent text-accent-fg hover:brightness-110"
+const btnGhost = btn + " bg-surface-2 text-fg hover:bg-border"
+const selectCls = "w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs text-fg"
+
+templ StatusSelect(it tracking.Item, listCtx, target string) {
+	<select
+		name="status"
+		aria-label="Status"
+		hx-post={ mediaURL(it.ID) + "/status" }
+		hx-trigger="change"
+		hx-vals={ vals("ctx", listCtx) }
+		hx-target={ target }
+		hx-swap="outerHTML"
+		class={ selectCls }
+	>
+		for _, s := range tracking.Statuses {
+			<option value={ s } selected?={ s == it.Status }>{ StatusLabel(s) }</option>
+		}
+	</select>
+}
+
+// MediaCard is the single swap unit for list views. Every action inside it
+// targets the card itself, so no DOM ids are needed. undo is the id of an
+// episode just marked watched (0 for none).
+templ MediaCard(it tracking.Item, listCtx string, undo int64) {
+	<article class="flex min-w-0 flex-col gap-2 rounded-xl bg-surface p-2">
+		<a href={ templ.SafeURL(mediaURL(it.ID)) } hx-get={ mediaURL(it.ID) } hx-target="#main" hx-push-url="true">
+			@Poster(it.PosterPath, it.Title, false)
+		</a>
+		<div class="min-w-0">
+			<h3 class="truncate text-sm font-semibold" title={ it.Title }>{ it.Title }</h3>
+			<p class="text-xs text-muted">
+				if it.Year != "" {
+					{ it.Year } ·
+				}
+				{ TypeLabel(it.Type) }
+			</p>
+		</div>
+		if it.Progress.Stale {
+			@StaleBadge(it.Progress.DaysIdle)
+		}
+		if it.IsTV() {
+			if n := it.Progress.Next; n != nil {
+				<p class="truncate text-xs" title={ n.Name }>
+					<span class="text-muted">Next</span> <span class="font-medium">{ EpLabel(n) }</span>
+					if n.Name != "" {
+						<span class="text-muted">· { n.Name }</span>
+					}
+				</p>
+			} else {
+				<p class="text-xs">
+					<span class="font-medium text-ok">Caught up</span>
+					if u := it.Progress.Upcoming; u != nil {
+						<span class="text-muted">· next { ShortDate(*u) }</span>
+					}
+				</p>
+			}
+			@ProgressCounter(it.ID, it.Progress.Watched, it.Progress.Aired, false, false)
+		} else if it.WatchedAt != nil {
+			<p class="text-xs text-muted">Watched { ShortDate(*it.WatchedAt) }</p>
+		}
+		<div class="mt-auto flex flex-wrap gap-1.5">
+			if it.IsTV() && it.Progress.Next != nil && (it.Status == tracking.StatusWatching || it.Status == tracking.StatusBacklog) {
+				<button
+					type="button"
+					hx-put={ "/episodes/" + itoa(it.Progress.Next.ID) + "/watched" }
+					hx-vals={ vals("ctx", listCtx) }
+					hx-target="closest article"
+					hx-swap="outerHTML"
+					hx-disabled-elt="this"
+					hx-sync="closest article:drop"
+					class={ btnPrimary, "flex-1" }
+				>Mark watched</button>
+			}
+			if it.Progress.CanComplete {
+				<button
+					type="button"
+					hx-post={ mediaURL(it.ID) + "/status" }
+					hx-vals={ vals("ctx", listCtx, "status", tracking.StatusCompleted) }
+					hx-target="closest article"
+					hx-swap="outerHTML"
+					hx-disabled-elt="this"
+					hx-sync="closest article:drop"
+					class={ btnPrimary, "flex-1" }
+				>Mark completed</button>
+			}
+			if !it.IsTV() && it.Status != tracking.StatusCompleted {
+				<button
+					type="button"
+					hx-post={ mediaURL(it.ID) + "/watched" }
+					hx-vals={ vals("ctx", listCtx) }
+					hx-target="closest article"
+					hx-swap="outerHTML"
+					hx-disabled-elt="this"
+					hx-sync="closest article:drop"
+					class={ btnPrimary, "flex-1" }
+				>Mark watched</button>
+			}
+			if undo != 0 {
+				<button
+					type="button"
+					hx-delete={ "/episodes/" + itoa(undo) + "/watched" }
+					hx-vals={ vals("ctx", listCtx) }
+					hx-target="closest article"
+					hx-swap="outerHTML"
+					hx-disabled-elt="this"
+					hx-sync="closest article:drop"
+					class={ btnGhost }
+				>Undo</button>
+			}
+		</div>
+		@StatusSelect(it, listCtx, "closest article")
+	</article>
+}
+
+templ CardGrid() {
+	<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+		{ children... }
+	</div>
+}
+
+type SearchRowVM struct {
+	TMDBID     int64
+	Type       string
+	Title      string
+	Year       string
+	PosterPath string
+	// MediaID and Status are set when the item is already in the catalog.
+	MediaID int64
+	Status  string
+}
+
+templ SearchResults(rows []SearchRowVM, q string) {
+	if len(rows) == 0 {
+		<li class="py-6 text-center text-sm text-muted">No results for “{ q }”.</li>
+	}
+	for _, r := range rows {
+		@SearchRow(r)
+	}
+}
+
+templ SearchRow(r SearchRowVM) {
+	<li class="flex items-center gap-3 py-2">
+		<div class="w-12 shrink-0">
+			@Poster(r.PosterPath, "", true)
+		</div>
+		<div class="min-w-0 flex-1">
+			<p class="truncate text-sm font-medium">{ r.Title }</p>
+			<p class="text-xs text-muted">
+				if r.Year != "" {
+					{ r.Year } ·
+				}
+				{ TypeLabel(r.Type) }
+			</p>
+		</div>
+		if r.Status != "" {
+			<a
+				href={ templ.SafeURL(mediaURL(r.MediaID)) }
+				hx-get={ mediaURL(r.MediaID) }
+				hx-target="#main"
+				hx-push-url="true"
+				class="shrink-0 rounded-full bg-surface-2 px-3 py-1 text-xs font-medium"
+			>{ StatusLabel(r.Status) }</a>
+		} else {
+			<form
+				hx-post="/media"
+				hx-target="closest li"
+				hx-swap="outerHTML"
+				hx-disabled-elt="find button"
+				class="flex shrink-0 items-center gap-1.5"
+			>
+				<input type="hidden" name="tmdb_id" value={ itoa(r.TMDBID) }/>
+				<input type="hidden" name="media_type" value={ r.Type }/>
+				<select name="status" aria-label="Initial status" class="rounded-md border border-border bg-surface-2 px-1.5 py-1.5 text-xs">
+					<option value="backlog" selected>Backlog</option>
+					<option value="watching">Watching</option>
+				</select>
+				<button type="submit" class={ btnPrimary }>Add</button>
+			</form>
+		}
+	</li>
+}
+
+templ EpisodeRow(e tracking.EpisodeVM) {
+	<li class={ "flex items-center gap-3 py-2", templ.KV("opacity-60", !e.Aired) }>
+		<button
+			type="button"
+			if e.Watched {
+				hx-delete={ "/episodes/" + itoa(e.ID) + "/watched" }
+				aria-label="Mark unwatched"
+			} else {
+				hx-put={ "/episodes/" + itoa(e.ID) + "/watched" }
+				aria-label="Mark watched"
+			}
+			aria-pressed={ boolStr(e.Watched) }
+			hx-vals={ vals("ctx", "detail") }
+			hx-target="closest li"
+			hx-swap="outerHTML"
+			hx-disabled-elt="this"
+			hx-sync="this:drop"
+			class={ "flex size-7 shrink-0 items-center justify-center rounded-full border text-sm",
+				templ.KV("border-accent bg-accent text-accent-fg", e.Watched),
+				templ.KV("border-border text-transparent hover:text-muted", !e.Watched) }
+		>✓</button>
+		<div class="min-w-0 flex-1">
+			<p class="truncate text-sm"><span class="tabular-nums text-muted">E{ itoa(e.Number) }</span> { e.Name }</p>
+			<p class="text-xs text-muted">{ AirDate(e.AirDate) }</p>
+		</div>
+	</li>
+}
+
+templ SeasonBlock(s tracking.Season, open bool) {
+	<section class="rounded-xl bg-surface">
+		<details open?={ open } class="group">
+			<summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+				<h2 class="font-semibold">{ s.Label() }</h2>
+				<span class="text-xs text-muted">{ itoa(len(s.Eps)) } episodes</span>
+			</summary>
+			<div class="border-t border-border px-4 pb-2">
+				if s.Aired > 0 {
+					<div class="flex justify-end pt-2">
+						<button
+							type="button"
+							hx-put={ mediaURL(s.MediaID) + "/seasons/" + itoa(s.Number) + "/watched" }
+							hx-target="closest section"
+							hx-swap="outerHTML"
+							hx-disabled-elt="this"
+							class={ btnGhost }
+						>Mark season watched</button>
+					</div>
+				}
+				<ul class="divide-y divide-border">
+					for _, e := range s.Eps {
+						@EpisodeRow(e)
+					}
+				</ul>
+			</div>
+		</details>
+	</section>
+}
