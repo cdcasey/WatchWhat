@@ -50,7 +50,7 @@
 ## 7. Container and deployment
 
 - [x] 7.1 Write the multi-stage Dockerfile (D12) with pinned Tailwind version + SHA-256 and `TARGETARCH`; verify `docker buildx build --platform linux/amd64,linux/arm64` succeeds
-- [ ] 7.2 Write README sections: env vars, `docker run` with named volume, bind-mount `chown 65532`, and backup via `.backup`/`VACUUM INTO`; verify by running the documented command on a clean host and confirming data persists across container recreation
+- [x] 7.2 Write README sections: env vars, `docker run` with named volume, bind-mount `chown 65532`, and backup via `.backup`/`VACUUM INTO`; verify by running the documented command on a clean host and confirming data persists across container recreation
 - [x] 7.3 End-to-end check in the container: search, add a show, mark next episode, assign to today, see it in Today's Lineup; verify `HEALTHCHECK` reports healthy
 
 ## Workflow follow-up
