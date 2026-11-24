@@ -13,6 +13,25 @@ A private, self-hosted tracker for the TV shows and movies a household is watchi
 | `TZ` | `UTC` | Defines "today" for Today's Lineup, air dates, and stale detection. Zone data is embedded in the binary. |
 | `WATCHWHAT_DEBUG` | unset | Any value enables per-request debug logging. |
 
+## Run with Docker Compose
+
+Create `.env` (gitignored, excluded from the image) with at least:
+
+```sh
+WATCHWHAT_TMDB_TOKEN=...
+TZ=America/Chicago
+```
+
+Then:
+
+```sh
+docker compose up -d --build
+```
+
+Data lives in the `watchwhat-data` named volume and survives `docker compose down` (but not `down -v`). Upgrade with `git pull && docker compose up -d --build`.
+
+WatchWhat has no authentication, and `8080:8080` publishes on every host interface. With Tailscale on the host, publish on its Tailscale IP instead (see the commented line in `compose.yaml`). Note that a container started on boot can fail to bind that IP if Docker starts before `tailscaled`.
+
 ## Run with Docker
 
 Build (single arch for the local machine):
