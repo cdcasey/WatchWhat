@@ -4,14 +4,12 @@ services:
     build: .
     env_file: .env # WATCHWHAT_TMDB_TOKEN, TZ, ... (see .env.example)
     ports:
-      - "8080:8080"
-      # WatchWhat has no auth. To expose it only on the tailnet, publish on the
-      # host's Tailscale IP instead (`tailscale ip -4`):
-      # - "100.x.y.z:8080:8080"
+      # Loopback only: WatchWhat has no auth, so the host's Caddy is the only
+      # way in. Host port is WATCHWHAT_PORT from .env (default 8081; wordler
+      # already uses 8080 on the mini).
+      - "127.0.0.1:${WATCHWHAT_PORT:-8081}:8080"
     volumes:
       - watchwhat-data:/data
-      # Or a bind mount (directory must be owned by 65532:65532, see README):
-      # - /srv/watchwhat:/data
     restart: unless-stopped
 
 volumes:
