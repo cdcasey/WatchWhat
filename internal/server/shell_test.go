@@ -73,6 +73,22 @@ func TestAssetsSameOrigin(t *testing.T) {
 	}
 }
 
+func TestFavicon(t *testing.T) {
+	h := newHarness(t)
+	body := h.get("/").Body.String()
+	mustContain(t, body, `<link rel="icon" href="/favicon.ico"`)
+	svg := regexp.MustCompile(`<link rel="icon" href="(/static/favicon\.svg\?v=[0-9a-f]{8})" type="image/svg\+xml"`).FindStringSubmatch(body)
+	if svg == nil {
+		t.Fatal("no versioned SVG icon link")
+	}
+	for path, ct := range map[string]string{"/favicon.ico": "image/", svg[1]: "image/svg+xml"} {
+		rec := h.get(path)
+		if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), ct) {
+			t.Errorf("%s: %d %q", path, rec.Code, rec.Header().Get("Content-Type"))
+		}
+	}
+}
+
 func TestNotFoundIsFullHTML(t *testing.T) {
 	h := newHarness(t)
 	for _, p := range []string{"/nope", "/media/999999", "/media/abc"} {

@@ -73,3 +73,12 @@ func (m Manifest) Handler() http.Handler {
 		files.ServeHTTP(w, r)
 	})
 }
+
+// Alias serves the asset p at a fixed root URL (e.g. /favicon.ico, which
+// browsers request on their own). It can't be versioned, so cache for a day.
+func (m Manifest) Alias(p string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		http.ServeFileFS(w, r, m.fsys, p)
+	})
+}

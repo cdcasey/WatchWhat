@@ -6,6 +6,7 @@ type Meta struct {
 	Active string
 	CSS    string
 	JS     string
+	Icon   string // versioned SVG favicon URL
 }
 
 // htmx 2 doesn't swap 4xx/5xx by default; errors are retargeted to #toasts by
@@ -22,6 +23,8 @@ templ Base(m Meta, content templ.Component) {
 			<meta name="color-scheme" content="dark"/>
 			<meta name="htmx-config" content={ htmxConfig }/>
 			<title>{ PageTitle(m.Title) }</title>
+			<link rel="icon" href="/favicon.ico" sizes="32x32"/>
+			<link rel="icon" href={ m.Icon } type="image/svg+xml"/>
 			<link rel="stylesheet" href={ m.CSS }/>
 			<script src={ m.JS } defer></script>
 		</head>

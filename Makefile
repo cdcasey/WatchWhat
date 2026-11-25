@@ -4,6 +4,8 @@ SQLC_VERSION ?= v1.31.1
 TAILWIND_VERSION ?= v4.3.5
 TAILWIND := bin/tailwindcss
 BINARY ?= bin/watchwhat
+# make dev's database when neither the shell nor .env sets WATCHWHAT_DB_PATH.
+DEV_DB ?= data/watchwhat.db
 
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
@@ -40,6 +42,8 @@ build: generate css
 # Rebuilds CSS on change in the background, regenerates templ on change, restarts the server.
 dev: generate css
 	@set -a; [ -f .env ] && . ./.env; set +a; \
+	export WATCHWHAT_DB_PATH="$${WATCHWHAT_DB_PATH:-$(DEV_DB)}"; \
+	mkdir -p "$$(dirname "$$WATCHWHAT_DB_PATH")"; \
 	$(TAILWIND) -i web/tailwind/input.css -o web/static/css/app.css --watch=always & \
 	trap 'kill %1' EXIT; \
 	$(GO) tool templ generate --watch --proxy=http://localhost:8080 --cmd="$(GO) run ./cmd/server"

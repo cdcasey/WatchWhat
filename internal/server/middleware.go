@@ -32,7 +32,7 @@ func (a *App) logging(next http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
-		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" {
+		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" || r.URL.Path == "/favicon.ico" {
 			return
 		}
 		a.Log.Debug("request", "method", r.Method, "path", r.URL.Path, "status", sw.status,

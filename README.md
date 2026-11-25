@@ -173,7 +173,7 @@ Requires Go 1.26+. Everything else is fetched on demand:
 | `make css` | Builds `web/static/css/app.css` with the Tailwind standalone CLI, downloaded to `bin/` on first use. |
 | `make sqlc` | Regenerates `internal/store` from `internal/db/{migrations,queries}` (pinned sqlc via `go run`; needs CGO). Output is committed. |
 | `make build` | generate + css + `CGO_ENABLED=0` build to `bin/watchwhat`. |
-| `make dev` | Watches templ and Tailwind, restarts the server; reads `.env` if present. Proxy at http://localhost:7331. |
+| `make dev` | Watches templ and Tailwind, restarts the server; reads `.env` if present. Uses `data/watchwhat.db` (gitignored) unless `WATCHWHAT_DB_PATH` is set. Proxy at http://localhost:7331. |
 | `make test` | generate + `go test ./...`. |
 
 Generated `*_templ.go` files and `app.css` are gitignored; `internal/store` (sqlc output) is committed.
