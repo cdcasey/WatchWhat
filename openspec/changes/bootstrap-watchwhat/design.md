@@ -33,8 +33,10 @@ internal/
     migrate.go                goose with embedded FS
     migrations/*.sql          //go:embed migrations/*.sql
     queries/*.sql             sqlc input
+    dbtest/                   New(t): migrated temp-file DB for tests
   store/                      sqlc output (package store), committed
   tmdb/                       HTTP client + response types
+    tmdbtest/                 fake TMDB httptest server for catalog/handler tests
   catalog/                    add/refresh/remove media, background refresher
   tracking/                   status changes, mark/unmark, progress, next episode, stale (pure funcs)
   schedule/                   weekday assignment + lineup assembly
@@ -56,9 +58,10 @@ web/
 sqlc.yaml
 Makefile
 Dockerfile
+compose.yaml                  production run (see D14)
 ```
 
-`//go:embed` can't use `..`, so each embedded tree gets its own `embed.go` next to it (`web/`, `internal/db/`). `*_templ.go` files are gitignored and generated in both dev and Docker. sqlc output is committed (see D9).
+`//go:embed` can't use `..`, so each embedded tree gets its own `embed.go` next to it (`web/`, `internal/db/`). `*_templ.go` files are gitignored and generated in both dev and Docker. sqlc output is committed (see D12).
 
 Alternative considered: one flat `internal/app` package. Rejected because the stale and next-episode logic would end up tangled with handlers.
 
@@ -75,7 +78,7 @@ type App struct {
     Cfg     config.Config
     Log     *slog.Logger
     Now     func() time.Time   // in Cfg.Location; overridden in tests
-    Assets  assets.Manifest    // hashed static URLs
+    Assets  web.Manifest       // hashed static URLs
 }
 
 type appHandler func(w http.ResponseWriter, r *http.Request) error
@@ -99,7 +102,7 @@ type HTTPError struct { Status int; Msg string; Err error }
 | GET | `/search/results?q=` | SearchRow list fragment |
 | POST | `/media` | form `tmdb_id, media_type, status`; returns updated SearchRow |
 | GET | `/media/{id}` | Show/movie detail page (seasons, episodes) |
-| DELETE | `/media/{id}` | `HX-Redirect` to previous list |
+| DELETE | `/media/{id}` | `HX-Redirect` to the list for the item's status (`/watching`, ...) |
 | POST | `/media/{id}/status` | form `status, ctx`; returns MediaCard or empty (see D6) |
 | POST | `/media/{id}/refresh` | detail content fragment |
 | POST | `/media/{id}/watched` | movie watched; MediaCard |
@@ -111,6 +114,8 @@ type HTTPError struct { Status int; Msg string; Err error }
 | POST | `/schedule/{day}/{media_id}/move` | form `dir=up\|down`; DayColumn fragment |
 | GET | `/static/` | embedded FS |
 | GET | `/healthz` | `PingContext` |
+
+`{day}` is the `time.Weekday` number (`0`–`6`, Sunday = 0), matching the schema; anything else is a 404.
 
 There are only ~20 routes, so chi adds nothing. Method-scoped patterns give automatic 405s. The mux's 404 is wrapped so it renders the HTML error page.
 
@@ -194,11 +199,14 @@ type Progress struct {
     Upcoming    *time.Time   // next known air date when caught up
     Watched, Aired int
     LastActivity time.Time   // max(last_watched_at, status_changed_at if no watches)
-    DaysIdle    int          // calendar days in cfg.Location
+    DaysIdle    int          // calendar days in now.Location()
     Stale       bool
+    CanComplete bool         // offer "Mark completed" (see below)
 }
-func Compute(row ProgressRow, today civil.Date, loc *time.Location) Progress
+func Compute(row ProgressRow, now time.Time) Progress  // now carries cfg.Location
 ```
+
+`CanComplete = status == watching && Next == nil && Upcoming == nil && Aired > 0 && tmdb_status IN ('Ended','Canceled')`.
 
 `Stale = status == watching && Next != nil && DaysIdle > 14`. Using calendar days, not 24h multiples, makes "14 days ago" mean the same thing at 08:00 and 23:00. The threshold is a package constant, not config. It is computed at read time (spec: stale-detection). "Most stale first" and "stale only" are applied in Go after the query, because the list is at most dozens of rows.
 
@@ -210,7 +218,7 @@ func Compute(row ProgressRow, today civil.Date, loc *time.Location) Progress
 - `Vary: HX-Request` is always set so browser caches don't serve a fragment for a direct load.
 
 **Cards.**
-- `MediaCard(m MediaVM, ctx string)` is the single swap unit. Its root is `<article>`, and every action inside it uses `hx-target="closest article" hx-swap="outerHTML"`. No DOM ids are needed, so the same show can appear in Lineup and in Continue watching without id collisions.
+- `MediaCard(it tracking.Item, listCtx string, undo int64)` is the single swap unit. (The parameter can't be named `ctx` because templ reserves that name for its context.) Its root is `<article>`, and every action inside it uses `hx-target="closest article" hx-swap="outerHTML"`. No DOM ids are needed, so the same show can appear in Lineup and in Continue watching without id collisions.
 - `ctx` (`home|watching|backlog|...`) is sent with `hx-vals`. On a status change, if the new status doesn't belong in `ctx`, the server returns an empty 200 body and the card disappears in place.
 
 **Mark next.**
@@ -223,7 +231,9 @@ func Compute(row ProgressRow, today civil.Date, loc *time.Location) Progress
 - An empty `q` returns an empty fragment without calling TMDB.
 - Each SearchRow has its own root and swaps itself after an add.
 
-**Episode list.** The detail page renders `SeasonBlock` > `EpisodeRow`. Toggling a row swaps the row and also returns an out-of-band `ProgressCounter` (`hx-swap-oob="true"`, id `progress-{mediaID}`). That is the one place OOB is used, and the id is unique because the detail page shows one show.
+**Episode list.** The detail page renders `SeasonBlock` > `EpisodeRow`. Toggling a row swaps the row and also returns an out-of-band `ProgressCounter` (`hx-swap-oob="true"`, id `progress-{mediaID}`). The id is unique because the detail page shows one show.
+
+**Page fragments.** An HTMX page response also carries `<title>` and an out-of-band `Nav`, so the active section and tab title follow navigation. Those and the progress counter are the only OOB swaps.
 
 **Errors.**
 - htmx 2 does not swap 4xx/5xx responses by default. The base layout sets `<meta name="htmx-config">` with `responseHandling` so `[45]..` responses swap with `error: true`.
@@ -272,49 +282,24 @@ A 6h tick with a 24h eligibility window gives "at least daily" without a cron de
 | `WATCHWHAT_TMDB_TOKEN` | required | startup fails if empty |
 | `WATCHWHAT_TMDB_LANGUAGE` | `en-US` | |
 | `TZ` | `UTC` | defines "today"; tzdata embedded via `import _ "time/tzdata"` |
+| `WATCHWHAT_DEBUG` | unset | any value enables per-request debug logging |
 
 ### D12. Build tooling and Dockerfile
 
 - **Go-based tools.** `templ` is pinned as a Go tool (`go get -tool github.com/a-h/templ/cmd/templ@vX`) and run with `go tool templ generate`, so the generator version always matches the runtime library.
 - **sqlc.** Run locally via `make sqlc`, with output committed. sqlc's build pulls in a CGO Postgres parser, so it stays out of the image build. CI can check for drift with `sqlc diff`.
-- **Dockerfile.** Multi-stage, sketched below. buildx's `TARGETARCH` selects the Tailwind binary, so amd64 and arm64 home servers both work.
-
-```dockerfile
-FROM golang:1.25-alpine AS build
-ARG TARGETARCH
-ARG TAILWIND_VERSION=v4.1.x
-WORKDIR /src
-RUN apk add --no-cache curl
-RUN arch=$([ "$TARGETARCH" = "arm64" ] && echo arm64 || echo x64) && \
-    curl -fsSL -o /usr/local/bin/tailwindcss \
-      https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/tailwindcss-linux-${arch}-musl && \
-    chmod +x /usr/local/bin/tailwindcss          # + sha256 check against pinned sum
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN go tool templ generate
-RUN tailwindcss -i web/tailwind/input.css -o web/static/css/app.css --minify
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/watchwhat ./cmd/server
-RUN mkdir -p /out/data
-
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/watchwhat /watchwhat
-COPY --from=build --chown=65532:65532 /out/data /data
-VOLUME /data
-EXPOSE 8080
-HEALTHCHECK CMD ["/watchwhat", "healthcheck"]
-ENTRYPOINT ["/watchwhat"]
-```
+- **Go version.** Go 1.26. The pinned templ and goose releases require it.
+- **Dockerfile.** Multi-stage. See `Dockerfile` for the full file.
+  - The build stage runs `FROM --platform=$BUILDPLATFORM golang:1.26-alpine` and cross-compiles with `GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0`, so a multi-arch buildx build needs no emulation.
+  - Tailwind therefore runs on the build host, and `BUILDARCH` (not `TARGETARCH`) selects the binary. It is the v4.3.5 musl build, checked against a pinned SHA-256 per arch.
+  - The musl Tailwind binary links `libstdc++` and `libgcc` dynamically, so the build stage installs both.
+  - Go module and build caches use `RUN --mount=type=cache`.
+  - The runtime image is `gcr.io/distroless/static-debian12:nonroot` with `/data` pre-created as 65532:65532.
+  - The image sets `WATCHWHAT_ADDR`, `WATCHWHAT_DB_PATH`, `VOLUME /data`, `EXPOSE 8080`, and `HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/watchwhat","healthcheck"]`.
 
 - **Healthcheck.** distroless has no shell or curl, so the binary accepts a `healthcheck` subcommand that GETs `http://127.0.0.1:8080/healthz` and exits 0/1.
 - **Volume ownership.** A named volume (`-v watchwhat-data:/data`) inherits the 65532 ownership from the image. A bind mount needs `chown 65532:65532` on the host directory, which the README documents.
-- **Example run.**
-
-```
-docker run -d --name watchwhat -p 8080:8080 \
-  -e WATCHWHAT_TMDB_TOKEN=... -e TZ=America/Chicago \
-  -v watchwhat-data:/data --restart unless-stopped watchwhat:latest
-```
+- **Running it.** `compose.yaml` is the primary path (see D14). The README keeps a `docker run` equivalent.
 
 ### D13. Testing approach
 
@@ -325,23 +310,37 @@ docker run -d --name watchwhat -p 8080:8080 \
   - Tests build `App` with a fake TMDB server and a fixed `Now`, then assert status, HX response headers, and fragment-vs-document output (presence of `<html`).
   - An integration test hits a running server end to end.
 
+### D14. Deployment (home server)
+
+The target is a Mac mini running OrbStack, with Tailscale and Caddy on the host.
+
+- **Compose.** One service. `env_file: .env` supplies the token and `TZ`, so nothing has to be exported in a shell. `restart: unless-stopped`.
+- **Loopback only.** The port is published as `127.0.0.1:${WATCHWHAT_PORT:-8081}:8080`. The app has no auth, so the host's Caddy is the only way in, and the app is never exposed on the LAN. 8081 is the default because another app already holds 8080 on the host.
+- **Named volume.** The volume is explicitly named `watchwhat-data`, so the README backup commands work without the Compose project prefix.
+  - Prefer it to a bind mount on macOS. A bind mount goes through OrbStack's file sharing, which ignores ownership and makes SQLite WAL locking unreliable if the host ever opens the file.
+  - On a Linux host a bind mount works if the directory is `chown 65532:65532`. This was verified: without the chown, startup fails with `unable to open database file (14)`.
+- **Caddy.** Host Caddy terminates TLS on the machine's single `*.ts.net` name, using certificates from the local tailscaled, and gives WatchWhat its own site on a separate port (e.g. `:8443`) proxying to `127.0.0.1:8081`.
+  - Path-prefix mounting (`handle_path /watchwhat*`) is not supported, because links, assets, HTMX attributes and `HX-Redirect` are all root-relative. Supporting a prefix would mean threading a base path through every URL. That isn't worth it while ports are free.
+- **No private details in the repo.** Tailnet hostnames and IPs stay out of the repo, so docs use placeholders.
+
 ## Risks / Trade-offs
 
 - [Stale duplicate cards on Home: marking from Lineup doesn't update the same show in Continue watching] → Accepted. The next navigation fixes it. If it bothers us, Home can exclude lineup shows from Continue watching.
 - [Two devices act on the same show concurrently] → Idempotent episode-specific writes and last-write-wins status. No data loss, worst case a stale card until refresh.
 - [Single DB connection serializes requests] → Every query is sub-millisecond at this size, and no transaction spans network I/O. Split into read and write pools if latency ever shows up.
 - [TMDB renumbers or merges episodes] → Upsert by `tmdb_id`, never delete. Orphaned watched episodes stay visible. Manual cleanup is acceptable.
-- [WAL file not captured by naive backups] → Document backing up with `sqlite3 /data/watchwhat.db ".backup ..."` or `VACUUM INTO` from the host. Do not copy the `.db` file alone while it's running.
+- [WAL file not captured by naive backups] → Document backing up with `sqlite3 /data/watchwhat.db ".backup ..."` or `VACUUM INTO`, run from a throwaway alpine container that mounts the volume (the distroless image has no `sqlite3`). Do not copy the `.db` file alone while it's running.
 - [Hotlinked posters fail when TMDB images are slow or down] → The `<img>` sits in a fixed-aspect box whose background shows the title, so a failed load degrades to the placeholder without JS. Thumbnail caching is a later change, and `poster_path` is already stored for it.
 - [htmx `responseHandling` override changes default semantics] → Confined to one meta tag and covered by a handler test asserting `HX-Retarget` on every error.
 - [Tailwind standalone binary download in the build] → Pinned version and SHA-256. The build fails loudly on mismatch.
+- [OrbStack starts at login, not boot] → Host-level auto-login brings the containers back after a reboot. This is shared with the other apps on the mini.
+- [Caddy on a non-443 port gets plain-HTTP requests when users omit `https://`] → Bookmark the `https://` URL, or enable Caddy's `http_redirect` listener wrapper for that port.
 
 ## Migration Plan
 
-Greenfield deploy:
-1. Build the image.
-2. Create the volume.
-3. Run with the token and TZ.
-4. Migrations run on first start.
+Greenfield deploy (the README has the exact steps):
+1. Create `.env` with the token and `TZ`.
+2. `docker compose up -d --build`. Migrations run on first start.
+3. Add the Caddy site block and reload Caddy.
 
 Rollback: stop the container, restore the `.backup` copy, run the previous image tag. Future migrations stay forward-only in practice; goose Down exists only for local dev.

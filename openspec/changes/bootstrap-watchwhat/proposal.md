@@ -30,7 +30,7 @@ Our household wants a private, low-friction way to track which TV shows and movi
 
 ## Impact
 
-- New repository contents: Go module, `cmd/server`, `internal/*` packages, templ components, SQL migrations and sqlc queries, Tailwind input CSS, vendored `htmx.min.js`, Dockerfile.
+- New repository contents: Go module, `cmd/server`, `internal/*` packages, templ components, SQL migrations and sqlc queries, Tailwind input CSS, vendored `htmx.min.js`, Dockerfile, `compose.yaml`.
 - External dependency: TMDB API v3 (requires an API read access token supplied via environment).
-- Runtime: one container with a persistent volume for the SQLite database; reached only over Tailscale.
+- Runtime: one container with a persistent volume for the SQLite database. It is published on loopback and reached only over Tailscale, through the host's Caddy.
 - Go dependencies: `modernc.org/sqlite`, `github.com/pressly/goose/v3`, `github.com/a-h/templ`; build-time tools: `templ`, `sqlc`, Tailwind standalone CLI.
