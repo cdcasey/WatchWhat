@@ -31,6 +31,7 @@ func (a *App) Handler() http.Handler {
 	h("POST /schedule/{day}/{media_id}/move", a.scheduleMove)
 
 	mux.Handle("GET /static/", a.Assets.Handler())
+	mux.Handle("GET /favicon.ico", a.Assets.Alias("favicon.ico"))
 	mux.HandleFunc("GET /healthz", a.healthz)
 
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

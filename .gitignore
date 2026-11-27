@@ -1,4 +1,5 @@
 /backups/
+/data/
 *_templ.go
 web/static/css/app.css
 *.db

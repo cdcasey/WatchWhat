@@ -113,7 +113,7 @@ func wantsFragment(r *http.Request) bool {
 }
 
 func (a *App) meta(title, active string) layout.Meta {
-	return layout.Meta{Title: title, Active: active, CSS: a.Assets.URL("css/app.css"), JS: a.Assets.URL("js/htmx.min.js")}
+	return layout.Meta{Title: title, Active: active, CSS: a.Assets.URL("css/app.css"), JS: a.Assets.URL("js/htmx.min.js"), Icon: a.Assets.URL("favicon.svg")}
 }
 
 // render writes a navigable view: a full document or the content fragment.
