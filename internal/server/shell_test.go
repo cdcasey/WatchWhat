@@ -81,7 +81,13 @@ func TestFavicon(t *testing.T) {
 	if svg == nil {
 		t.Fatal("no versioned SVG icon link")
 	}
-	for path, ct := range map[string]string{"/favicon.ico": "image/", svg[1]: "image/svg+xml"} {
+	mustContain(t, body, `<link rel="apple-touch-icon" href="/apple-touch-icon.png"`)
+	for path, ct := range map[string]string{
+		"/favicon.ico":                      "image/",
+		svg[1]:                              "image/svg+xml",
+		"/apple-touch-icon.png":             "image/png",
+		"/apple-touch-icon-precomposed.png": "image/png",
+	} {
 		rec := h.get(path)
 		if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), ct) {
 			t.Errorf("%s: %d %q", path, rec.Code, rec.Header().Get("Content-Type"))

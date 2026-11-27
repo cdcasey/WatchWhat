@@ -32,6 +32,9 @@ func (a *App) Handler() http.Handler {
 
 	mux.Handle("GET /static/", a.Assets.Handler())
 	mux.Handle("GET /favicon.ico", a.Assets.Alias("favicon.ico"))
+	// iOS home screen / Favorites icon. Safari also probes the -precomposed name.
+	mux.Handle("GET /apple-touch-icon.png", a.Assets.Alias("apple-touch-icon.png"))
+	mux.Handle("GET /apple-touch-icon-precomposed.png", a.Assets.Alias("apple-touch-icon.png"))
 	mux.HandleFunc("GET /healthz", a.healthz)
 
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
